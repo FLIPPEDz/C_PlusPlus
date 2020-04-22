@@ -6,7 +6,11 @@
 #include <stdio.h>
 #include <cstdlib>
 #include <iostream>
+#include <thread>
+
+using std::thread;
 using std::cin;
+
 #pragma comment (lib,"ws2_32.lib")
 
 enum CMD
@@ -74,16 +78,106 @@ struct LoginOutResult :public Header
 	int result;
 };
 
+
 struct NewUserJoin :public Header
 {
 	NewUserJoin()
 	{
 		lendata = sizeof(NewUserJoin);
-		cmd = CMD_LOGINOUT_RESULT;
-		result = 0;
+		cmd = CMD_NEW_USER_JOIN;
+		sock = 0;
 	}
-	int result;
+	int sock;
 };
+
+int process(SOCKET _client)
+{
+	char recbuffer[1024] = {};
+
+
+	int len = recv(_client, recbuffer, sizeof(Header), 0);
+
+	Header* head = (Header*)recbuffer;
+
+
+	if (len <= 0)
+	{
+		printf("socket:%d与服务器断开连接,任务结束\n",_client);
+		return -1;
+	}
+
+	switch (head->cmd)
+	{
+		case CMD_LOGIN_RESULT:
+		{
+
+			recv(_client, recbuffer + sizeof(head), head->lendata - sizeof(head), 0);
+
+			LoginResult* login = (LoginResult*)recbuffer;
+			printf("收到服务端消息CMD_LOGIN_RESULT:%d,数据长度:%d\n",login->result
+				, login->lendata);
+		}
+		break;
+		case CMD_LOGINOUT_RESULT:
+		{
+
+			recv(_client, recbuffer + sizeof(head), head->lendata - sizeof(head), 0);
+			LoginOutResult* loginout = (LoginOutResult*)recbuffer;
+			printf("收到服务端消息CMD_LOGINOUT_RESULT:%d,数据长度:%d\n", loginout->result
+				, loginout->lendata);
+		}
+		break;
+		case CMD_NEW_USER_JOIN:
+		{
+
+			recv(_client, recbuffer + sizeof(head), head->lendata - sizeof(head), 0);
+			NewUserJoin* usr = (NewUserJoin*)recbuffer;
+			printf("收到服务端消息CMD_NEW_USER_JOIN:%d,数据长度:%d\n", usr->sock
+				, usr->lendata);
+		}
+		break;
+	}
+
+	return 0;
+}
+
+bool flag = true;
+
+void cmdThread(SOCKET client)
+{
+	
+	while (true)
+	{
+		char cmdbuf[50] = {};
+
+		scanf("%s", cmdbuf);
+
+		if (0 == strcmp(cmdbuf, "exit"))
+		{
+			flag = false;
+			printf("cmdThread退出\n");
+			break;;
+		}
+		else if (0 == strcmp(cmdbuf, "login"))
+		{
+			Login login;
+			strcpy(login.usrname, "zb");
+			strcpy(login.password, "zb");
+			send(client, (const char*)&login, sizeof(login), 0);
+		}
+		else if (0 == strcmp(cmdbuf, "logout"))
+		{
+			LoginOut loginout;
+			strcpy(loginout.usrname, "zb");
+			send(client, (const char*)&loginout, sizeof(loginout), 0);
+		}
+		else
+		{
+			printf("不支持的命令\n");
+		}
+	}
+	return;
+}
 
 
 int main()
@@ -108,7 +202,7 @@ int main()
 	int ret=connect(client, (sockaddr*)&_sin, sizeof(_sin));
 
 
-	if (SOCKET_ERROR == client)
+	if (SOCKET_ERROR == ret)
 	{
 		printf("connect fault!\n");
 	}
@@ -117,15 +211,22 @@ int main()
 		printf("connect success!\n");
 	}
 
-	char recvbuffer[128] = {};
-	while (true)
+	thread t1(cmdThread,client);
+	
+	if (t1.joinable())
+	{
+		t1.detach();
+	}
+
+	while (flag)
 	{
 		fd_set fd_read;
 		FD_ZERO(&fd_read);
 		FD_SET(client, &fd_read);
 
+		timeval t{ 1,0 };
 
-		int ret=select(client, &fd_read, 0, 0, 0);
+		int ret=select(client, &fd_read, 0, 0, &t);
 
 		if (ret<0)
 		{
@@ -136,46 +237,26 @@ int main()
 		if (FD_ISSET(client,&fd_read))
 		{
 			FD_CLR(client, &fd_read);
+			if (-1 == process(client))
+			{
+				printf("select finish2\n");
+				break;
+			}
 		}
-		
-		if (0==strcmp(cmdbuffer,"exit"))
-		{
-			break;
-		}
-		else if(0 == strcmp(cmdbuffer, "login"))
-		{
-			//发送数据
-			Login login;
-			strcpy(login.usrname, "admin");
-			strcpy(login.password, "admin");
-			send(client, (char*)&login, sizeof(login), 0);
-			//接收返回数据
-			LoginResult res = {};
-			recv(client, (char*)&res, sizeof(res), 0);
-			printf("res:%d\n", res.result);
-		}
-		else if (0 == strcmp(cmdbuffer, "logout"))
-		{
-			//发送数据
-			LoginOut loginout;
-			strcpy(loginout.usrname, "admin");
-			send(client, (char*)&loginout, sizeof(loginout), 0);
-			//接收返回数据
-			LoginOutResult res = {};
-			recv(client, (char*)&res, sizeof(res), 0);
-			printf("res:%d\n", res.result);
+		//thread
+		//if (t1.joinable())
+		//{
+		//	t1.join();
+		//}
 
-		}
-		else 
-		{
-			printf("不支持命令,请重新输入\n");
-		}
-		
+		//printf("空闲处理其他任务\n");
 	}
 
 	closesocket(client);
 
 	WSACleanup();
+	printf("已退出\n");
+
 
 	system("pause");
 	return 0;
