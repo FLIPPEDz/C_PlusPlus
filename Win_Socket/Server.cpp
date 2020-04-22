@@ -1,17 +1,12 @@
-#define WIN32_LEAN_AND_MEAN
+#define  WIN32_LEAN_AND_MEAN
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
-#define _CRT_SECURE_NO_WARNINGS
 #include <windows.h>
 #include <WinSock2.h>
 #include <stdio.h>
-#include <cstdlib>
-#include <iostream>
-#include <thread>
+#include <vector>
+//#pragma comment(lib,"ws2_32.lib")
 
-using std::thread;
-using std::cin;
 
-#pragma comment (lib,"ws2_32.lib")
 
 enum CMD
 {
@@ -32,7 +27,7 @@ struct Header
 };
 
 //login
-struct Login :public Header
+struct Login:public Header
 {
 	Login()
 	{
@@ -90,6 +85,8 @@ struct NewUserJoin :public Header
 	int sock;
 };
 
+std::vector<SOCKET> g_clients;
+
 int process(SOCKET _client)
 {
 	char recbuffer[1024] = {};
@@ -102,162 +99,180 @@ int process(SOCKET _client)
 
 	if (len <= 0)
 	{
-		printf("socket:%d与服务器断开连接,任务结束\n",_client);
+		printf("<client:%d> quit task!\n",_client);
 		return -1;
 	}
-
+	
 	switch (head->cmd)
 	{
-		case CMD_LOGIN_RESULT:
-		{
+	case CMD_LOGIN:
+	{
 
-			recv(_client, recbuffer + sizeof(head), head->lendata - sizeof(head), 0);
+		recv(_client, recbuffer + sizeof(head), head->lendata - sizeof(head), 0);
 
-			LoginResult* login = (LoginResult*)recbuffer;
-			printf("收到服务端消息CMD_LOGIN_RESULT:%d,数据长度:%d\n",login->result
-				, login->lendata);
-		}
-		break;
-		case CMD_LOGINOUT_RESULT:
-		{
+		Login* login = (Login*)recbuffer;
+		printf("recv <client:%d> cmd:CMD_LOGIN datalen:%d username:%s userpsw:%s\n",_client, login->lendata
+			, login->usrname, login->password);
+		//忽略判断用户密码是否正确
 
-			recv(_client, recbuffer + sizeof(head), head->lendata - sizeof(head), 0);
-			LoginOutResult* loginout = (LoginOutResult*)recbuffer;
-			printf("收到服务端消息CMD_LOGINOUT_RESULT:%d,数据长度:%d\n", loginout->result
-				, loginout->lendata);
-		}
-		break;
-		case CMD_NEW_USER_JOIN:
-		{
+		LoginResult loginres;
+		send(_client, (char*)&loginres, sizeof(loginres), 0);
+	}
+	break;
+	case CMD_LOGINOUT:
+	{
 
-			recv(_client, recbuffer + sizeof(head), head->lendata - sizeof(head), 0);
-			NewUserJoin* usr = (NewUserJoin*)recbuffer;
-			printf("收到服务端消息CMD_NEW_USER_JOIN:%d,数据长度:%d\n", usr->sock
-				, usr->lendata);
-		}
-		break;
+		recv(_client, recbuffer + sizeof(head), head->lendata - sizeof(head), 0);
+		LoginOut* loginout = (LoginOut*)recbuffer;
+		printf("recv <client:%d> cmd:CMD_LOGINOUT datalen:%d username:%s\n",_client, loginout->lendata
+			, loginout->usrname);
+
+		//忽略判断用户密码是否正确
+
+
+		LoginOutResult loginoutres;
+		send(_client, (char*)&loginoutres, sizeof(loginoutres), 0);
+	}
+	break;
+	default:
+	{
+		Header he = { 0,CMD_ERROR };
+		send(_client, (char*)&head, sizeof(head), 0);
+	}
+	break;
 	}
 
 	return 0;
 }
 
-bool flag = true;
-
-void cmdThread(SOCKET client)
-{
-	
-	while (true)
-	{
-		char cmdbuf[50] = {};
-
-		scanf("%s", cmdbuf);
-
-		if (0 == strcmp(cmdbuf, "exit"))
-		{
-			flag = false;
-			printf("cmdThread退出\n");
-			break;;
-		}
-		else if (0 == strcmp(cmdbuf, "login"))
-		{
-			Login login;
-			strcpy(login.usrname, "zb");
-			strcpy(login.password, "zb");
-			send(client, (const char*)&login, sizeof(login), 0);
-		}
-		else if (0 == strcmp(cmdbuf, "logout"))
-		{
-			LoginOut loginout;
-			strcpy(loginout.usrname, "zb");
-			send(client, (const char*)&loginout, sizeof(loginout), 0);
-		}
-		else
-		{
-			printf("不支持的命令\n");
-		}
-	}
-	return;
-}
-
-
 int main()
 {
-	WORD ver = MAKEWORD(2, 2);
+	WORD var = MAKEWORD(2, 2);
 	WSADATA data;
-	WSAStartup(ver, &data);
 
-	SOCKET client;
-	client = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	
-	if (INVALID_SOCKET == client)
-	{
-		printf("client create fault!\n");
-	}
+	WSAStartup(var, &data);
+
+	SOCKET _sock;
+	_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
 	sockaddr_in _sin = {};
+
 	_sin.sin_family = AF_INET;
 	_sin.sin_port = htons(40000);
-	_sin.sin_addr.S_un.S_addr = inet_addr("127.0.0.1");
-
-	int ret=connect(client, (sockaddr*)&_sin, sizeof(_sin));
+	_sin.sin_addr.S_un.S_addr = INADDR_ANY;
 
 
-	if (SOCKET_ERROR == ret)
+	if (SOCKET_ERROR==bind(_sock, (sockaddr*)&_sin, sizeof(_sin)))
 	{
-		printf("connect fault!\n");
+		printf("bind fault!\n");
 	}
 	else
 	{
-		printf("connect success!\n");
+		printf("bind succes!\n");
 	}
 
-	thread t1(cmdThread,client);
-	
-	if (t1.joinable())
+	if (SOCKET_ERROR == listen(_sock, 5))
 	{
-		t1.detach();
+		printf("listen fault!\n");
+	}
+	else
+	{
+		printf("listen succes!\n");
 	}
 
-	while (flag)
+
+
+	while (true)
 	{
+		//伯克利 socket 描述符
 		fd_set fd_read;
+		fd_set fd_write;
+		fd_set fd_exp;
+		
 		FD_ZERO(&fd_read);
-		FD_SET(client, &fd_read);
+		FD_ZERO(&fd_write);
+		FD_ZERO(&fd_exp);
 
-		timeval t{ 1,0 };
+		//放到集合中
+		FD_SET(_sock, &fd_read);
+		FD_SET(_sock, &fd_write);
+		FD_SET(_sock, &fd_exp);
 
-		int ret=select(client, &fd_read, 0, 0, &t);
+		for (int i=(int)g_clients.size()-1;i>=0;i--)
+		{
+			FD_SET(g_clients[i], &fd_read);
+		}
+
+		timeval ti_me{1,0};
+		
+
+		//nfds 整数值 指集合中所有描述符(socket)的范围，而不是数量
+		//windows中可以写零
+		int ret=select(_sock+1,&fd_read,&fd_write,&fd_exp,&ti_me);
 
 		if (ret<0)
 		{
-			printf("select finish\n");
+			printf("select quit task!\n");
 			break;
 		}
-
-		if (FD_ISSET(client,&fd_read))
+		
+		if (FD_ISSET(_sock,&fd_read))
 		{
-			FD_CLR(client, &fd_read);
-			if (-1 == process(client))
-			{
-				printf("select finish2\n");
-				break;
-			}
-		}
-		//thread
-		//if (t1.joinable())
-		//{
-		//	t1.join();
-		//}
+			FD_CLR(_sock, &fd_read);
+			sockaddr_in clientAddr = {};
 
-		//printf("空闲处理其他任务\n");
+			SOCKET _client = INVALID_SOCKET;
+
+			int len = sizeof(clientAddr);
+
+			_client = accept(_sock, (sockaddr*)&clientAddr, &len);
+
+			if (INVALID_SOCKET == _client)
+			{
+				printf("accept _client fault!\n");
+			}
+			else
+			{
+				for (int i = (int)g_clients.size() - 1;i >= 0;i--)
+				{
+					NewUserJoin userjion;
+					send(g_clients[i], (const char*)&userjion, sizeof(NewUserJoin), 0);
+				}
+
+				g_clients.push_back(_client);
+
+				printf("new client socket=%d ip=%s\n", (int)_client, inet_ntoa(clientAddr.sin_addr));
+			}		
+			
+		}
+
+		for (size_t i=0;i<fd_read.fd_count;++i)
+		{
+			if (process(fd_read.fd_array[i])==-1)
+			{
+				auto itr = find(g_clients.begin(), g_clients.end(), g_clients[i]);
+				if (itr!=g_clients.end())
+				{
+					g_clients.erase(itr);
+				}
+			}
+		}	
+
+		printf("空闲处理其他任务\n");
 	}
 
-	closesocket(client);
+
+	for (size_t n = 0;n < g_clients.size();++n)
+	{
+		closesocket(g_clients[n]);
+	}
+	
+	g_clients.clear();
 
 	WSACleanup();
-	printf("已退出\n");
+	printf("finish task quit!\n");
 
+	getchar();
 
-	system("pause");
 	return 0;
 }
